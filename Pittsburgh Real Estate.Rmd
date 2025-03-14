@@ -1,0 +1,737 @@
+---
+title: "Pittsburgh Real Estate Analysis"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-03-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+```
+
+```{r}
+# Read data and load packages
+parcels <- read.csv("Parcel Data.csv")
+sales <- read.csv("Property Transactions.csv")
+library(dplyr)
+```
+
+```{r}
+# Clean data. Exclude 0 or 1 sales prices - skews sales prices lower. Filter by residential properties to exclude commercial space.
+
+parcels <- parcels[trimws(toupper(parcels$SALECODE)) != "3", ]
+
+parcels <- parcels[trimws(toupper(parcels$SALEPRICE)) != "0", ]
+parcels <- parcels[trimws(toupper(parcels$SALEPRICE)) != "1", ]
+
+parcels <- parcels[parcels$CLASSDESC == "RESIDENTIAL", ]
+```
+
+
+```{r}
+# Deal with inflation
+library(quantmod)
+
+# Convert SALEDATE to Date format
+parcels$SALEDATE <- as.Date(parcels$SALEDATE, format = "%m-%d-%Y")
+
+# Extract the year from SALEDATE
+parcels <- parcels %>%
+  mutate(Year = format(SALEDATE, "%Y"))
+
+# Convert SALEPRICE to REALSALEPRICE (inflation-adjusted)
+
+# Retrieve CPI data from FRED (Consumer Price Index for All Urban Consumers)
+getSymbols("CPIAUCSL", src = "FRED")
+
+# Convert CPI data to a data frame
+cpi_data <- data.frame(
+  Date = index(CPIAUCSL),
+  CPI = as.numeric(CPIAUCSL)
+)
+
+# Extract the year for merging
+cpi_data <- cpi_data %>%
+  mutate(Year = format(Date, "%Y"))
+
+# Merge CPI data with your dataset
+parcels <- parcels %>%
+  left_join(cpi_data, by = "Year")
+
+# Calculate REALSALEPRICE adjusted to the most recent CPI
+latest_cpi <- max(cpi_data$CPI, na.rm = TRUE)
+
+parcels <- parcels %>%
+  mutate(REALSALEPRICE = SALEPRICE * (latest_cpi / CPI))
+
+```
+
+
+```{r}
+# Is a condo a "house"? Let's assume yes
+# Should we only consider within the city limits? If so, uncomment to only include Pittsburgh school district
+parcels <- parcels[parcels$SCHOOLCODE == "47", ]
+# Instead of mean, let's use median so outliers don't influence as much
+  
+# Find average sale price by neighborhood
+avgneighprice <- parcels %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sale price by ward
+avgwardprice <- parcels %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sale price by zip
+avgzipprice <- parcels %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sales price per (?) per neighborhood
+  # Create column dividing real sales price by numerical physical attribute close to sqft
+
+# Per bedroom
+parcels <- parcels %>%
+  mutate(REALSALEPRICE_PER_ROOM = ifelse(BEDROOMS > 0, REALSALEPRICE / BEDROOMS, NA))
+
+# Per sqft
+parcels <- parcels %>%
+  mutate(REALSALEPRICE_PER_SQFT = ifelse(BEDROOMS > 0, REALSALEPRICE / FINISHEDLIVINGAREA, NA))
+
+# Find average sale price per room by neighborhood
+avgneighprice_perroom <- parcels %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Find average sale price per room by ward
+avgwardprice_perroom <- parcels %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Find average sale price per room by ward
+avgzipprice_perroom <- parcels %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Per lot size
+parcels <- parcels %>%
+  mutate(REALSALEPRICE_PER_LOT = ifelse(LOTAREA > 0, REALSALEPRICE / LOTAREA, NA))
+
+# Find average sale price per lot by neighborhood
+avgneighprice_perlot <- parcels %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per lot by ward
+avgwardprice_perlot <- parcels %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per lot by zip
+avgzipprice_perlot <- parcels %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per sqft by neighborhood
+avgneighprice_persqft <- parcels %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Find average sale price per sqft by ward
+avgwardprice_persqft <- parcels %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Find average sale price per sqft by zip
+avgzipprice_persqft <- parcels %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Join measures of prices by neighborhood
+avgneighprice <- avgneighprice %>%
+  inner_join(avgneighprice_perlot, by = "NEIGHDESC") %>%
+  inner_join(avgneighprice_perroom, by = "NEIGHDESC") %>%
+  inner_join(avgneighprice_persqft, by = "NEIGHDESC")
+
+# Join measures of prices by ward
+avgwardprice <- avgwardprice %>%
+  inner_join(avgwardprice_perlot, by = "MUNIDESC") %>%
+  inner_join(avgwardprice_perroom, by = "MUNIDESC") %>%
+  inner_join(avgwardprice_persqft, by = "MUNIDESC")
+
+# Join measures of prices by zip
+avgzipprice <- avgzipprice %>%
+  inner_join(avgzipprice_perlot, by = "PROPERTYZIP") %>%
+  inner_join(avgzipprice_perroom, by = "PROPERTYZIP") %>%
+  inner_join(avgzipprice_persqft, by = "PROPERTYZIP")
+
+# Per lot size excludes apartments and condos because their lot size is 0.
+
+rm(avgneighprice_perlot,avgneighprice_perroom, avgneighprice_persqft,avgwardprice_perlot,avgwardprice_perroom,avgwardprice_persqft,avgzipprice_perlot,avgzipprice_perroom,avgzipprice_persqft)
+
+# In terms of geographic precision, it seems to be NEIGHDESC < PROPERTYZIP < WARD. Wards vary but they can be as small as one building, so let's use zip codes as a healthy medium.
+
+# Take the difference of the average sales price in the most and least expensive zips
+
+# Create a heatmap of Pittsburgh with sales prices and sales prices per (?).
+```
+
+```{r}
+library(gt)
+library(dplyr)
+
+# Format Neighborhood Prices Table
+avgwardprice %>%
+  arrange(desc(AVGREALSALEPRICE)) %>%
+  mutate(Rank = row_number()) %>%
+  gt() %>%
+  tab_header(
+    title = "Average Sale Price by Ward",
+    subtitle = "Sorted by Median Sale Price"
+  ) %>%
+  fmt_currency(
+    columns = starts_with("AVGREALSALEPRICE"),
+    currency = "USD"
+  ) %>%
+  data_color(
+    columns = AVGREALSALEPRICE,
+    colors = scales::col_numeric(
+      palette = c("lightblue", "darkblue"),
+      domain = NULL
+    )
+  ) %>%
+  cols_label(
+    MUNIDESC = "Ward",
+    AVGREALSALEPRICE = "Median Sale Price",
+    AVGREALSALEPRICE_PERROOM = "Per Room",
+    AVGREALSALEPRICE_PER_SQFT = "Per SqFt",
+    AVGREALSALEPRICE_PER_LOT = "Per Lot",
+    Rank = "Rank"
+  ) %>%
+  tab_source_note("Data Source: WPRDC Assessor Records")
+
+
+library(kableExtra)
+
+avgzipprice %>%
+  arrange(desc(AVGREALSALEPRICE)) %>%
+  head(20) %>%
+  kable("html", caption = "Top 20 ZIP Codes by Average Sale Price") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(2, color = "white", background = "steelblue") %>%
+  add_header_above(c(" " = 1, "Average Sale Price" = 4))
+
+```
+
+
+```{r}
+# Visualizations
+library(ggplot2)
+library(scales)  # For better axis formatting
+
+# Aggregate data for visualization
+top_zips_data <- parcels %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(
+    MEDIAN_PRICE = median(REALSALEPRICE, na.rm = TRUE),
+    SALES_COUNT = n(), 
+    .groups = "drop"
+  ) %>%
+  arrange(desc(MEDIAN_PRICE)) %>%
+  slice_head(n = 20)
+
+# Bar Chart with Dual Emphasis
+ggplot(top_zips_data, aes(x = reorder(PROPERTYZIP, MEDIAN_PRICE), y = MEDIAN_PRICE, fill = SALES_COUNT)) +
+  geom_col() +
+  geom_text(aes(label = scales::dollar(MEDIAN_PRICE)), hjust = -0.1, size = 3) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  scale_y_continuous(labels = scales::dollar) +
+  coord_flip() +
+  labs(
+    title = "Top 20 Most Expensive ZIP Codes in Pittsburgh",
+    subtitle = "Median Real Home Sale Prices with Transaction Volume",
+    x = "ZIP Code",
+    y = "Median Real Sale Price (USD)",
+    fill = "Number of Sales"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray40"),
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    panel.grid.major = element_line(color = "gray90")
+  )
+
+top_neigh <- parcels %>%
+  group_by(MUNIDESC) %>%
+  summarize(MEDIANREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(MEDIANREALSALEPRICE)) %>%
+  slice_head(n = 5)
+
+parcels <- parcels %>%
+  mutate(Year = as.numeric(as.character(Year)))
+
+parcels %>%
+  filter(MUNIDESC %in% top_neigh$MUNIDESC) %>%
+  mutate(Year = as.numeric(Year)) %>%
+  filter(!is.na(Year)) %>%
+  group_by(MUNIDESC, Year) %>%
+  summarize(MEDIANREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = Year, y = MEDIANREALSALEPRICE, color = MUNIDESC, group = MUNIDESC)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(title = "Top 5 Most Expensive Neighborhoods - Price Trends", 
+       x = "Year", y = "Median Real Sales Price") +
+  scale_x_continuous(
+  breaks = seq(1960, max(parcels$Year, na.rm = TRUE), by = 5),  # Increase interval to 5 years
+  limits = c(1960, max(parcels$Year, na.rm = TRUE))
+)
+   
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "bottom"
+  )
+
+```
+```{r}
+# REPEAT FOR SINGLE-FAMILY HOMES
+
+parcels_single <- parcels[parcels$USEDESC == "SINGLE FAMILY", ]
+  
+# Find average sale price by neighborhood
+avgneighprice <- parcels_single %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sale price by ward
+avgwardprice <- parcels_single %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sale price by ip
+avgzipprice <- parcels_single %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE))
+
+# Find average sales price per (?) per neighborhood
+  # Create column dividing real sales price by numerical physical attribute close to sqft
+
+# Per bedroom
+parcels_single <- parcels_single %>%
+  mutate(REALSALEPRICE_PER_ROOM = ifelse(BEDROOMS > 0, REALSALEPRICE / BEDROOMS, NA))
+
+# Per sqft
+parcels_single <- parcels_single %>%
+  mutate(REALSALEPRICE_PER_SQFT = ifelse(BEDROOMS > 0, REALSALEPRICE / FINISHEDLIVINGAREA, NA))
+
+# Find average sale price per room by neighborhood
+avgneighprice_perroom <- parcels_single %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Find average sale price per room by ward
+avgwardprice_perroom <- parcels_single %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Find average sale price per room by ward
+avgzipprice_perroom <- parcels_single %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PERROOM = mean(REALSALEPRICE_PER_ROOM, na.rm = TRUE))
+
+# Per lot size
+parcels_single <- parcels_single %>%
+  mutate(REALSALEPRICE_PER_LOT = ifelse(LOTAREA > 0, REALSALEPRICE / LOTAREA, NA))
+
+# Find average sale price per lot by neighborhood
+avgneighprice_perlot <- parcels_single %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per lot by ward
+avgwardprice_perlot <- parcels_single %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per lot by zip
+avgzipprice_perlot <- parcels_single %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PER_LOT = mean(REALSALEPRICE_PER_LOT, na.rm = TRUE))
+
+# Find average sale price per sqft by neighborhood
+avgneighprice_persqft <- parcels_single %>%
+  group_by(NEIGHDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Find average sale price per sqft by ward
+avgwardprice_persqft <- parcels_single %>%
+  group_by(MUNIDESC) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Find average sale price per sqft by zip
+avgzipprice_persqft <- parcels_single %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(AVGREALSALEPRICE_PER_SQFT = mean(REALSALEPRICE_PER_SQFT, na.rm = TRUE))
+
+# Join measures of prices by neighborhood
+avgneighprice <- avgneighprice %>%
+  inner_join(avgneighprice_perlot, by = "NEIGHDESC") %>%
+  inner_join(avgneighprice_perroom, by = "NEIGHDESC") %>%
+  inner_join(avgneighprice_persqft, by = "NEIGHDESC")
+
+# Join measures of prices by ward
+avgwardprice <- avgwardprice %>%
+  inner_join(avgwardprice_perlot, by = "MUNIDESC") %>%
+  inner_join(avgwardprice_perroom, by = "MUNIDESC") %>%
+  inner_join(avgwardprice_persqft, by = "MUNIDESC")
+
+# Join measures of prices by zip
+avgzipprice <- avgzipprice %>%
+  inner_join(avgzipprice_perlot, by = "PROPERTYZIP") %>%
+  inner_join(avgzipprice_perroom, by = "PROPERTYZIP") %>%
+  inner_join(avgzipprice_persqft, by = "PROPERTYZIP")
+
+rm(avgneighprice_perlot,avgneighprice_perroom, avgneighprice_persqft,avgwardprice_perlot,avgwardprice_perroom,avgwardprice_persqft,avgzipprice_perlot,avgzipprice_perroom,avgzipprice_persqft)
+
+library(gt)
+library(dplyr)
+
+# Format Neighborhood Prices Table
+avgwardprice %>%
+  arrange(desc(AVGREALSALEPRICE)) %>%
+  mutate(Rank = row_number()) %>%
+  gt() %>%
+  tab_header(
+    title = "Average Sale Price by Ward (Single-Family)",
+    subtitle = "Sorted by Median Sale Price"
+  ) %>%
+  fmt_currency(
+    columns = starts_with("AVGREALSALEPRICE"),
+    currency = "USD"
+  ) %>%
+  data_color(
+    columns = AVGREALSALEPRICE,
+    colors = scales::col_numeric(
+      palette = c("lightblue", "darkblue"),
+      domain = NULL
+    )
+  ) %>%
+  cols_label(
+    MUNIDESC = "Ward",
+    AVGREALSALEPRICE = "Median Sale Price",
+    AVGREALSALEPRICE_PERROOM = "Per Room",
+    AVGREALSALEPRICE_PER_SQFT = "Per SqFt",
+    AVGREALSALEPRICE_PER_LOT = "Per Lot",
+    Rank = "Rank"
+  ) %>%
+  tab_source_note("Data Source: WPRDC Assessor Records")
+
+
+library(kableExtra)
+
+avgzipprice %>%
+  arrange(desc(AVGREALSALEPRICE_PER_SQFT)) %>%
+  head(20) %>%
+  kable("html", caption = "Top 20 ZIP Codes by Average Sale Price (Single-Family)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(2, color = "white", background = "steelblue") %>%
+  add_header_above(c(" " = 1, "Average Sale Price" = 4))
+
+# Visualizations
+library(ggplot2)
+library(scales)  # For better axis formatting
+
+# Aggregate data for visualization
+top_zips_data <- parcels_single %>%
+  group_by(PROPERTYZIP) %>%
+  summarize(
+    MEDIAN_PRICE = median(REALSALEPRICE, na.rm = TRUE),
+    SALES_COUNT = n(), 
+    .groups = "drop"
+  ) %>%
+  arrange(desc(MEDIAN_PRICE)) %>%
+  slice_head(n = 20)
+
+# Bar Chart with Dual Emphasis
+ggplot(top_zips_data, aes(x = reorder(PROPERTYZIP, MEDIAN_PRICE), y = MEDIAN_PRICE, fill = SALES_COUNT)) +
+  geom_col() +
+  geom_text(aes(label = scales::dollar(MEDIAN_PRICE)), hjust = -0.1, size = 3) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  scale_y_continuous(labels = scales::dollar) +
+  coord_flip() +
+  labs(
+    title = "Top 20 Most Expensive ZIP Codes in Pittsburgh (Single-Family)",
+    subtitle = "Median Real Home Sale Prices with Transaction Volume",
+    x = "ZIP Code",
+    y = "Median Real Sale Price (USD)",
+    fill = "Number of Sales"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "gray40"),
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    panel.grid.major = element_line(color = "gray90")
+  )
+
+top_neigh <- parcels_single %>%
+  group_by(MUNIDESC) %>%
+  summarize(MEDIANREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(MEDIANREALSALEPRICE)) %>%
+  slice_head(n = 5)
+
+parcels_single <- parcels_single %>%
+  mutate(Year = as.numeric(as.character(Year)))
+
+parcels_single %>%
+  filter(MUNIDESC %in% top_neigh$MUNIDESC) %>%
+  mutate(Year = as.numeric(Year)) %>%
+  filter(!is.na(Year)) %>%
+  group_by(MUNIDESC, Year) %>%
+  summarize(MEDIANREALSALEPRICE = median(REALSALEPRICE, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = Year, y = MEDIANREALSALEPRICE, color = MUNIDESC, group = MUNIDESC)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(title = "Top 5 Most Expensive Neighborhoods - Price Trends (Single-Family)", 
+       x = "Year", y = "Median Real Sales Price") +
+  scale_x_continuous(
+  breaks = seq(1960, max(parcels_single$Year, na.rm = TRUE), by = 5),  # Increase interval to 5 years
+  limits = c(1960, max(parcels_single$Year, na.rm = TRUE))
+)
+   
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "bottom"
+  )
+
+```
+```{r}
+# Mapping
+library(sf)
+library(tigris)
+library(ggplot2)
+library(patchwork)
+
+# Download ZIP code boundaries for Pennsylvania
+pittsburgh_map <- zctas(state = "PA", year = 2010)
+
+# Ensure ZIP codes are the same type
+pittsburgh_map$ZCTA5CE10 <- as.character(pittsburgh_map$ZCTA5CE10)
+avgzipprice$PROPERTYZIP <- as.character(avgzipprice$PROPERTYZIP)
+
+# Filter for Pittsburgh ZIP codes
+pittsburgh_map <- pittsburgh_map %>%
+  filter(ZCTA5CE10 %in% unique(parcels$PROPERTYZIP))
+
+# Join datasets
+map_data <- pittsburgh_map %>%
+  left_join(avgzipprice, by = c("ZCTA5CE10" = "PROPERTYZIP")) %>%
+  filter(!is.na(AVGREALSALEPRICE) & !is.na(AVGREALSALEPRICE_PER_SQFT))
+
+# Median Sale Price
+plot1 <- ggplot(map_data) +
+  geom_sf(aes(fill = AVGREALSALEPRICE), color = "white", lwd = 0.4) +
+  scale_fill_viridis_c(
+    option = "magma",
+    direction = -1,
+    trans = "log",
+    breaks = c(100000, 300000, 500000, 1000000),
+    labels = scales::dollar_format()
+  ) +
+  coord_sf(xlim = c(-80.15, -79.8), ylim = c(40.35, 40.52)) +
+  labs(
+    title = "Pittsburgh Real Estate Heatmap", 
+    subtitle = "Median Sale Price by ZIP Code",
+    fill = "Sale Price (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Sale Price per Square Foot
+plot2 <- ggplot(map_data) +
+  geom_sf(aes(fill = AVGREALSALEPRICE_PER_SQFT), color = "white", lwd = 0.4) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    direction = -1,
+    breaks = c(50, 150, 300, 500),
+    labels = scales::dollar_format()
+  ) +
+  coord_sf(xlim = c(-80.15, -79.8), ylim = c(40.35, 40.52)) +
+  labs(
+    title = "", 
+    subtitle = "Average Sale Price Per SqFt by ZIP Code",
+    fill = "Price per SqFt (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Combine both maps for side-by-side comparison
+plot1 + plot2 + plot_layout(ncol = 2, widths = c(1, 1))
+
+
+```
+
+
+```{r}
+# Construct a model and run a feature importance test with property descriptions: NEIGHDESC, STYLEDESC, STORIES, YEARBLT, EXTFINISH_DESC, ROOFDESC, BASEMENTDESC, GRADE, CONDITION, CDU, TOTALROOMS, BEDROOMS, FULLBATHS, HALFBATHS, HEATINGCOOLINGDESC, FIREPLACES, BSMTGARAGE, FINISHEDLIVINGAREA
+
+# Install necessary packages
+# install.packages(c("tidyverse", "caret", "randomForest"))
+
+# Load libraries
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(xgboost)
+# Select relevant features
+features <- c("NEIGHDESC", "STYLEDESC", "STORIES", "YEARBLT", "EXTFINISH_DESC",
+              "ROOFDESC", "BASEMENTDESC", "GRADE", "CONDITION", "CDU",
+              "TOTALROOMS", "BEDROOMS", "FULLBATHS", "HALFBATHS",
+              "HEATINGCOOLINGDESC", "FIREPLACES", "BSMTGARAGE", "FINISHEDLIVINGAREA")
+
+# Filter dataset to include only relevant columns
+model_data <- parcels %>%
+  select(all_of(features), REALSALEPRICE) %>%
+  drop_na() 
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(across(where(is.character), as.factor))
+
+# Split data into training (70%) and testing (30%) sets
+set.seed(123)
+train_index <- createDataPartition(model_data$REALSALEPRICE, p = 0.7, list = FALSE)
+train_data <- model_data[train_index, ]
+test_data <- model_data[-train_index, ]
+
+# Convert categorical variables to numeric for xgboost
+dtrain <- xgb.DMatrix(data = model.matrix(~ . -1, data = train_data %>% select(-REALSALEPRICE)), 
+                      label = train_data$REALSALEPRICE)
+dtest <- xgb.DMatrix(data = model.matrix(~ . -1, data = test_data %>% select(-REALSALEPRICE)), 
+                     label = test_data$REALSALEPRICE)
+```
+
+
+```{r}
+# Train an XGBoost model
+xgb_model <- xgboost(data = dtrain, 
+                     nrounds = 100, 
+                     objective = "reg:squarederror")
+
+# Save the model
+save(xgb_model, file = "xgb_model.rda")
+```
+```{r}
+load("xgb_model.rda")
+```
+
+
+```{r}
+# Predict and evaluate
+predictions <- predict(xgb_model, dtest)
+rmse <- sqrt(mean((test_data$REALSALEPRICE - predictions)^2))
+
+cat("XGBoost RMSE:", rmse, "\n")
+
+# Calculate performance metrics
+rmse <- sqrt(mean((test_data$REALSALEPRICE - predictions)^2))
+r_squared <- cor(test_data$REALSALEPRICE, predictions)^2
+
+cat("RMSE:", rmse, "\n")
+cat("R-squared:", r_squared, "\n")
+
+# Extract and convert importance data
+importance_matrix <- xgb.importance(model = xgb_model)
+
+# Custom visualization with ggplot2
+importance_matrix %>%
+  top_n(20, wt = Gain) %>%
+  ggplot(aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 20 Feature Importance", x = "Features", y = "Gain")
+
+# How can we account for size differences?
+```
+
+```{r}
+# Re-run instead using REALSALEPRICE_PERSQFT as target variable and excluding FINISHEDLIVINGAREA and NEIGHDESC
+
+# Load libraries
+library(tidyverse)
+library(caret)
+library(randomForest)
+# Select relevant features
+features <- c("STYLEDESC", "STORIES", "YEARBLT", "EXTFINISH_DESC",
+              "ROOFDESC", "BASEMENTDESC", "GRADE", "CONDITION", "CDU",
+              "TOTALROOMS", "BEDROOMS", "FULLBATHS", "HALFBATHS",
+              "HEATINGCOOLINGDESC", "FIREPLACES", "BSMTGARAGE")
+
+# Filter dataset to include only relevant columns
+model_data <- parcels %>%
+  select(all_of(features), REALSALEPRICE_PER_SQFT) %>%
+  drop_na() 
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(across(where(is.character), as.factor))
+
+# Split data into training (70%) and testing (30%) sets
+set.seed(123)
+train_index <- createDataPartition(model_data$REALSALEPRICE_PER_SQFT, p = 0.7, list = FALSE)
+train_data <- model_data[train_index, ]
+test_data <- model_data[-train_index, ]
+
+# Convert categorical variables to numeric for xgboost
+dtrain <- xgb.DMatrix(data = model.matrix(~ . -1, data = train_data %>% select(-REALSALEPRICE_PER_SQFT)), 
+                      label = train_data$REALSALEPRICE_PER_SQFT)
+dtest <- xgb.DMatrix(data = model.matrix(~ . -1, data = test_data %>% select(-REALSALEPRICE_PER_SQFT)), 
+                     label = test_data$REALSALEPRICE_PER_SQFT)
+```
+
+
+```{r}
+# Train an XGBoost model
+xgb_model <- xgboost(data = dtrain, 
+                     nrounds = 100, 
+                     objective = "reg:squarederror")
+
+# Save the model
+save(xgb_model, file = "xgb_model_persqft.rda")
+```
+```{r}
+load("xgb_model_persqft.rda")
+```
+
+
+```{r}
+# Predict and evaluate
+predictions <- predict(xgb_model, dtest)
+rmse <- sqrt(mean((test_data$REALSALEPRICE_PER_SQFT - predictions)^2))
+
+cat("XGBoost RMSE:", rmse, "\n")
+
+# Calculate performance metrics
+rmse <- sqrt(mean((test_data$REALSALEPRICE_PER_SQFT - predictions)^2))
+r_squared <- cor(test_data$REALSALEPRICE_PER_SQFT, predictions)^2
+
+cat("RMSE:", rmse, "\n")
+cat("R-squared:", r_squared, "\n")
+
+# Extract and convert importance data
+importance_matrix <- xgb.importance(model = xgb_model)
+
+# Custom visualization with ggplot2
+importance_matrix %>%
+  top_n(20, wt = Gain) %>%
+  ggplot(aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 20 Feature Importance", x = "Features", y = "Gain")
+```
+
